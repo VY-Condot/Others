@@ -1,0 +1,18 @@
+WpfJsonPlaceHolderAPI/
+ ├── Core/
+ │    ├── Interfaces/
+ │    ├── Models/
+ │
+ ├── Infrastructure/
+ │    ├── API/
+ │    ├── Caching/
+ │
+ ├── Presentation/
+ │    ├── Views/
+ │    ├── ViewModels/
+ │    ├── Commands/
+ │
+ ├── Shared/
+ │    ├── Base/
+ │
+ ├── Configuration/
