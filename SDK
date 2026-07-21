@@ -3,6 +3,9 @@ Files Password : DownloadDevTools.ir
 
 
 
+The "NuGet Visualizer" & Auditor: Build a lightweight web app using ASP.NET Core that parses a user's csproj file. It maps out their dependency tree visually and highlights outdated or insecure packages.?
+
+
 https://copilot.microsoft.com/shares/sJjSxYjQLarAAqDMjBcit
 
 ---------------------------------------------------------------
