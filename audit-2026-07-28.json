@@ -1,0 +1,47 @@
+{
+  "projectName": null,
+  "sdk": "Microsoft.NET.Sdk",
+  "targetFrameworks": [
+    "net8.0",
+    "net9.0",
+    "netstandard2.0"
+  ],
+  "generatedAt": "2026-07-28T11:07:19.634Z",
+  "stats": {
+    "totalPackages": 2,
+    "outdatedCount": 1,
+    "vulnerableCount": 0,
+    "deprecatedCount": 0,
+    "prereleaseCount": 0,
+    "maxSeverity": null,
+    "sources": {
+      "live": 2,
+      "fallback": 0,
+      "error": 0
+    }
+  },
+  "packages": [
+    {
+      "id": "Newtonsoft.Json",
+      "declaredVersion": "13.0.3",
+      "latestStableVersion": "13.0.4",
+      "isOutdated": true,
+      "isVulnerable": false,
+      "isDeprecated": false,
+      "maxSeverity": null,
+      "licenseCategory": "permissive",
+      "vulnerabilities": []
+    },
+    {
+      "id": "System.Text.Json",
+      "declaredVersion": "8.0.0",
+      "latestStableVersion": null,
+      "isOutdated": false,
+      "isVulnerable": false,
+      "isDeprecated": false,
+      "maxSeverity": null,
+      "licenseCategory": "none",
+      "vulnerabilities": []
+    }
+  ]
+}
