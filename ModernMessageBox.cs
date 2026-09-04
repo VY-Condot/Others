@@ -3865,6 +3865,8 @@
 
 //VER 1.8 ==================
 
+
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -3890,7 +3892,98 @@ namespace UltraModernUI.Controls
     }
     #endregion
 
-    public class ModernMessageBox : Form
+    /// <summary>
+    /// Base class that uses UpdateLayeredWindow for pixel-perfect HD alpha rendering and smooth fading.
+    /// </summary>
+    public abstract class LayeredForm : Form
+    {
+        protected float _opacity = 1f;
+
+        protected LayeredForm()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.SupportsTransparentBackColor, true);
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x00080000; // WS_EX_LAYERED - Required for UpdateLayeredWindow
+                return cp;
+            }
+        }
+
+        protected void RenderForm()
+        {
+            if (Width <= 0 || Height <= 0 || !IsHandleCreated) return;
+
+            using (Bitmap bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.Clear(Color.Transparent); // Clear background to transparent
+
+                    OnDraw(g);
+                }
+
+                IntPtr hdcScreen = GetDC(IntPtr.Zero);
+                IntPtr hdcSrc = CreateCompatibleDC(hdcScreen);
+                IntPtr hBitmap = bmp.GetHbitmap();
+                IntPtr hOldBitmap = SelectObject(hdcSrc, hBitmap);
+
+                BLENDFUNCTION blend = new BLENDFUNCTION
+                {
+                    BlendOp = AC_SRC_OVER,
+                    SourceConstantAlpha = (byte)(255 * _opacity),
+                    AlphaFormat = AC_SRC_ALPHA
+                };
+
+                Point ptDst = new Point(Left, Top);
+                Size sz = new Size(bmp.Width, bmp.Height);
+                Point ptSrc = new Point(0, 0);
+
+                UpdateLayeredWindow(this.Handle, hdcScreen, ref ptDst, ref sz, hdcSrc, ref ptSrc, 0, ref blend, ULW_ALPHA);
+
+                SelectObject(hdcSrc, hOldBitmap);
+                DeleteObject(hBitmap);
+                ReleaseDC(IntPtr.Zero, hdcScreen);
+                DeleteDC(hdcSrc);
+            }
+        }
+
+        protected abstract void OnDraw(Graphics g);
+
+        protected override void OnPaint(PaintEventArgs e) { RenderForm(); }
+        protected override void OnResize(EventArgs e) { base.OnResize(e); if (IsHandleCreated) RenderForm(); }
+
+        #region Win32 API
+        [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
+        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+        [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+        [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr hdc);
+        [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref Point pptDst, ref Size psize, IntPtr hdcSrc, ref Point pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct BLENDFUNCTION { public byte BlendOp; public byte BlendFlags; public byte SourceConstantAlpha; public byte AlphaFormat; }
+
+        const byte AC_SRC_OVER = 0;
+        const byte AC_SRC_ALPHA = 1;
+        const uint ULW_ALPHA = 2;
+        #endregion
+    }
+
+    public class ModernMessageBox : LayeredForm
     {
         private Color _backColor;
         private Color _accentColor;
@@ -3917,19 +4010,8 @@ namespace UltraModernUI.Controls
             _icon = icon;
 
             ApplyTheme();
-
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterParent;
-            TopMost = true;
-            ShowInTaskbar = false;
             Font = new Font("Segoe UI Variable Display", 9f);
-            BackColor = _backColor; // Pure solid background, no magenta hack
-
-            this.HandleCreated += (s, e) => {
-                int val = 2;
-                DwmSetWindowAttribute(this.Handle, 2, ref val, sizeof(int));
-            };
         }
 
         private void ApplyTheme()
@@ -3973,7 +4055,6 @@ namespace UltraModernUI.Controls
                     _cornerRadius = 0;
                     break;
             }
-            BackColor = _backColor;
         }
 
         public static ModernDialogResult Show(string message, string title = "Message", MessageBoxButtons buttons = MessageBoxButtons.OK, ModernMessageIcon icon = ModernMessageIcon.None)
@@ -4000,7 +4081,6 @@ namespace UltraModernUI.Controls
                 int height = (int)msgSize.Height + 120;
 
                 if (_icon != ModernMessageIcon.None) width += 60;
-
                 this.Size = new Size(width, height);
 
                 _buttonResults.Clear();
@@ -4015,52 +4095,16 @@ namespace UltraModernUI.Controls
                 }
 
                 _buttonRects.Clear();
-                int btnWidth = 100;
-                int btnHeight = 36;
-                int spacing = 12;
+                int btnWidth = 100, btnHeight = 36, spacing = 12;
                 int totalBtnWidth = (_buttonResults.Count * btnWidth) + ((_buttonResults.Count - 1) * spacing);
                 int startX = width - totalBtnWidth - 20;
 
                 for (int i = 0; i < _buttonResults.Count; i++)
-                {
                     _buttonRects.Add(new Rectangle(startX + (i * (btnWidth + spacing)), height - btnHeight - 20, btnWidth, btnHeight));
-                }
 
                 _closeRect = new Rectangle(width - 40, 12, 28, 28);
             }
-
-            // Apply Crisp Region
-            UpdateRegion();
         }
-
-        //private void UpdateRegion()
-        //{
-        //    if (Width > 0 && Height > 0)
-        //    {
-        //        using (var path = GetRoundedPath(ClientRectangle, _cornerRadius))
-        //        {
-        //            var newRegion = new Region(path);
-        //            var oldRegion = this.Region;
-        //            this.Region = newRegion;
-        //            oldRegion?.Dispose();
-        //            newRegion.Dispose(); // Form copies it internally
-        //        }
-        //    }
-        //}
-        private void UpdateRegion()
-        {
-            if (Width > 0 && Height > 0 && !IsDisposed)
-            {
-                using (var path = GetRoundedPath(ClientRectangle, _cornerRadius))
-                {
-                    var oldRegion = this.Region;
-                    this.Region = new Region(path); // WinForms takes ownership, DO NOT dispose this new Region!
-                    oldRegion?.Dispose(); // Only dispose the OLD region to prevent memory leaks
-                }
-            }
-        }
-
-        protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateRegion(); }
 
         protected override void WndProc(ref Message m)
         {
@@ -4074,24 +4118,15 @@ namespace UltraModernUI.Controls
                 foreach (var btn in _buttonRects) if (btn.Contains(pos)) return;
                 if (_closeRect.Contains(pos)) return;
 
-                m.Result = (IntPtr)0x2; // HTCAPTION
+                m.Result = (IntPtr)0x2; // HTCAPTION (Allow dragging)
             }
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+        protected override void OnDraw(Graphics g)
         {
-            Graphics g = e.Graphics;
-            // HD CRISP RENDERING SETTINGS
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality; // <--- CRITICAL FOR PIXEL PERFECT EDGES
-
             using (var bgPath = GetRoundedPath(ClientRectangle, _cornerRadius))
             using (var bgBrush = new SolidBrush(_backColor))
-            {
                 g.FillPath(bgBrush, bgPath);
-            }
 
             if (ModernNotificationConfig.Style == NotificationDesignStyle.CyberpunkIndustrial)
             {
@@ -4104,8 +4139,7 @@ namespace UltraModernUI.Controls
                 }
             }
 
-            int iconX = 24;
-            int iconY = 60;
+            int iconX = 24, iconY = 60;
             if (_icon != ModernMessageIcon.None)
             {
                 DrawModernIcon(g, iconX, iconY, _icon);
@@ -4159,52 +4193,43 @@ namespace UltraModernUI.Controls
 
                 using (var btnPath = GetRoundedPath(btnRect, _cornerRadius == 0 ? 0 : 6))
                 using (var btnBrush = new SolidBrush(btnBg))
-                {
                     g.FillPath(btnBrush, btnPath);
-                }
 
                 using (var textBrush = new SolidBrush(btnText))
                 using (var sf = new StringFormat { LineAlignment = StringAlignment.Center, Alignment = StringAlignment.Center })
-                {
                     g.DrawString(_buttonResults[i].ToString(), Font, textBrush, btnRect, sf);
-                }
             }
         }
 
         private void DrawModernIcon(Graphics g, int x, int y, ModernMessageIcon icon)
         {
-            Color iconColor = Color.White;
-            using (var pen = new Pen(iconColor, 3) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            using (var brush = new SolidBrush(iconColor))
+            using (var pen = new Pen(Color.White, 3) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            using (var brush = new SolidBrush(Color.White))
             {
                 if (icon == ModernMessageIcon.Info)
                 {
-                    iconColor = Color.FromArgb(0, 180, 255);
-                    pen.Color = iconColor; brush.Color = iconColor;
+                    pen.Color = Color.FromArgb(0, 180, 255); brush.Color = pen.Color;
                     g.DrawEllipse(pen, new Rectangle(x, y, 36, 36));
                     g.FillEllipse(brush, new Rectangle(x + 15, y + 8, 6, 6));
                     g.DrawLine(pen, x + 18, y + 16, x + 18, y + 26);
                 }
                 else if (icon == ModernMessageIcon.Warning)
                 {
-                    iconColor = Color.FromArgb(255, 160, 0);
-                    pen.Color = iconColor; brush.Color = iconColor;
+                    pen.Color = Color.FromArgb(255, 160, 0); brush.Color = pen.Color;
                     g.DrawEllipse(pen, new Rectangle(x, y, 36, 36));
                     g.DrawLine(pen, x + 18, y + 8, x + 18, y + 22);
                     g.FillEllipse(brush, new Rectangle(x + 15, y + 26, 6, 6));
                 }
                 else if (icon == ModernMessageIcon.Error)
                 {
-                    iconColor = Color.FromArgb(255, 50, 50);
-                    pen.Color = iconColor; brush.Color = iconColor;
+                    pen.Color = Color.FromArgb(255, 50, 50); brush.Color = pen.Color;
                     g.DrawEllipse(pen, new Rectangle(x, y, 36, 36));
                     g.DrawLine(pen, x + 10, y + 10, x + 26, y + 26);
                     g.DrawLine(pen, x + 26, y + 10, x + 10, y + 26);
                 }
                 else if (icon == ModernMessageIcon.Success)
                 {
-                    iconColor = Color.FromArgb(0, 220, 100);
-                    pen.Color = iconColor; brush.Color = iconColor;
+                    pen.Color = Color.FromArgb(0, 220, 100); brush.Color = pen.Color;
                     g.DrawEllipse(pen, new Rectangle(x, y, 36, 36));
                     g.DrawLine(pen, x + 10, y + 18, x + 16, y + 24);
                     g.DrawLine(pen, x + 16, y + 24, x + 28, y + 12);
@@ -4217,7 +4242,6 @@ namespace UltraModernUI.Controls
             base.OnMouseMove(e);
             int newHover = -1;
             for (int i = 0; i < _buttonRects.Count; i++) if (_buttonRects[i].Contains(e.Location)) newHover = i;
-
             bool newHoverClose = _closeRect.Contains(e.Location);
 
             if (newHover != _hoveredButton || newHoverClose != _hoverClose)
@@ -4267,9 +4291,6 @@ namespace UltraModernUI.Controls
             path.CloseFigure();
             return path;
         }
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
     }
 
     public static class ModernToaster
@@ -4296,7 +4317,6 @@ namespace UltraModernUI.Controls
                     yOffset += t.Height + 10;
             }
 
-            toaster.StartPosition = FormStartPosition.Manual;
             var screen = Screen.FromControl(mainForm).WorkingArea;
             toaster.Location = new Point(screen.Right - toaster.Width - 20, screen.Bottom - toaster.Height - yOffset);
 
@@ -4307,7 +4327,7 @@ namespace UltraModernUI.Controls
         }
     }
 
-    public class ToasterForm : Form
+    public class ToasterForm : LayeredForm
     {
         private Color _backColor;
         private Color _borderColor;
@@ -4324,7 +4344,6 @@ namespace UltraModernUI.Controls
         private float _progress = 1f;
         private Rectangle _closeRect;
         private bool _hoverClose = false;
-        private float _opacity = 0f;
 
         private int _state = 0; // 0 = Fade In, 1 = Waiting/Counting, 2 = Fade Out
 
@@ -4335,45 +4354,19 @@ namespace UltraModernUI.Controls
             _type = type;
             _duration = duration;
             _initialDuration = duration;
+            _opacity = 0; // Start transparent
 
             ApplyTheme();
-
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false;
-            TopMost = true;
             Font = new Font("Segoe UI Variable Display", 9f);
             Size = new Size(350, 90);
-            Opacity = 0;
-            BackColor = _backColor;
 
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = 16;
             _timer.Tick += Timer_Tick;
             _timer.Start();
-
-            this.HandleCreated += (s, e) => {
-                int val = 2;
-                DwmSetWindowAttribute(this.Handle, 2, ref val, sizeof(int));
-            };
         }
 
-        private void UpdateRegion()
-        {
-            if (Width > 0 && Height > 0)
-            {
-                using (var path = GetRoundedPath(ClientRectangle, _cornerRadius))
-                {
-                    var newRegion = new Region(path);
-                    var oldRegion = this.Region;
-                    this.Region = newRegion;
-                    oldRegion?.Dispose();
-                    newRegion.Dispose();
-                }
-            }
-        }
-
-        protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateRegion(); }
+        public Screen Screen { get; set; }
 
         private void ApplyTheme()
         {
@@ -4411,7 +4404,6 @@ namespace UltraModernUI.Controls
                     _cornerRadius = 0;
                     break;
             }
-            BackColor = _backColor;
 
             switch (_type)
             {
@@ -4422,22 +4414,17 @@ namespace UltraModernUI.Controls
             }
         }
 
-        public Screen Screen { get; set; }
-
         private void Timer_Tick(object sender, EventArgs e)
         {
             if (IsDisposed) return;
 
+            bool needsRedraw = false;
+
             if (_state == 0)
             {
                 _opacity += 0.1f;
-                if (_opacity >= 1f)
-                {
-                    _opacity = 1f;
-                    _state = 1;
-                }
-                Opacity = _opacity;
-                Invalidate();
+                if (_opacity >= 1f) { _opacity = 1f; _state = 1; }
+                needsRedraw = true;
             }
             else if (_state == 1)
             {
@@ -4451,7 +4438,7 @@ namespace UltraModernUI.Controls
                     {
                         _state = 2;
                     }
-                    Invalidate();
+                    needsRedraw = true;
                 }
                 else
                 {
@@ -4467,40 +4454,32 @@ namespace UltraModernUI.Controls
                     this.Close();
                     return;
                 }
-                Opacity = _opacity;
-                Invalidate();
+                needsRedraw = true;
             }
+
+            if (needsRedraw) Invalidate(); // Triggers OnPaint -> RenderForm
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+        protected override void OnDraw(Graphics g)
         {
-            Graphics g = e.Graphics;
-            // HD CRISP RENDERING SETTINGS
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality; // <--- CRITICAL FOR PIXEL PERFECT EDGES
-
+            using (var bgPath = GetRoundedPath(ClientRectangle, _cornerRadius))
             using (var bgBrush = new SolidBrush(_backColor))
-            {
-                g.FillRectangle(bgBrush, ClientRectangle);
-            }
+                g.FillPath(bgBrush, bgPath);
 
             if (ModernNotificationConfig.Style == NotificationDesignStyle.CyberpunkIndustrial)
             {
                 using (var glowPen = new Pen(Color.FromArgb(100, _borderColor), 4))
                 using (var corePen = new Pen(_borderColor, 1))
                 {
-                    g.DrawRectangle(glowPen, new Rectangle(0, 0, Width - 1, Height - 1));
-                    g.DrawRectangle(corePen, new Rectangle(0, 0, Width - 1, Height - 1));
+                    g.DrawPath(glowPen, GetRoundedPath(ClientRectangle, _cornerRadius));
+                    g.DrawPath(corePen, GetRoundedPath(ClientRectangle, _cornerRadius));
                 }
             }
             else
             {
+                using (var sidePath = GetRoundedPath(new Rectangle(0, 0, 6, Height), 3))
                 using (var sideBrush = new SolidBrush(_borderColor))
-                {
-                    g.FillRectangle(sideBrush, new Rectangle(0, 0, 6, Height));
-                }
+                    g.FillPath(sideBrush, sidePath);
             }
 
             int iconX = 20, iconY = 20;
@@ -4543,7 +4522,12 @@ namespace UltraModernUI.Controls
             }
 
             _closeRect = new Rectangle(Width - 32, 12, 20, 20);
-            if (_hoverClose) { using (var b = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillRectangle(b, _closeRect); }
+            if (_hoverClose)
+            {
+                using (var b = new SolidBrush(Color.FromArgb(40, 255, 255, 255)))
+                using (var p = GetRoundedPath(_closeRect, 4))
+                    g.FillPath(b, p);
+            }
             using (var crossPen = new Pen(_subTextColor, 2) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
                 g.DrawLine(crossPen, _closeRect.Left + 5, _closeRect.Top + 5, _closeRect.Right - 5, _closeRect.Bottom - 5);
@@ -4596,8 +4580,5 @@ namespace UltraModernUI.Controls
             path.CloseFigure();
             return path;
         }
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
     }
 }
